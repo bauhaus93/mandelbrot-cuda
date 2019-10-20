@@ -3,7 +3,10 @@
 import numpy as np
 import time
 import cv2
+import logging
 from numba import jit
+
+from utility import setup_logger
 
 @jit
 def mandelbrot_depth(c, max_depth):
@@ -15,7 +18,7 @@ def mandelbrot_depth(c, max_depth):
     return 0
 
 @jit
-def check_mandelbrot(center, pixel_shape, shape, max_depth):
+def create_mandelbrot(center, pixel_shape, shape, max_depth, loop_depth):
     min_x = center[0] - shape[0] / 2.
     max_x  = min_x + shape[0]
     space_real = np.linspace(min_x, max_x, pixel_shape[0])
@@ -24,56 +27,71 @@ def check_mandelbrot(center, pixel_shape, shape, max_depth):
     max_y = min_y + shape[1]
     space_imag = np.linspace(min_y, max_y, pixel_shape[1])
 
-    output = np.empty(pixel_shape)
-    for i in range(pixel_shape[0]):
-        for j in range(pixel_shape[1]):
-            output[i,j] = mandelbrot_depth(space_real[i] + 1j * space_imag[j], max_depth)
-    return output
+    hsv_img = np.empty((pixel_shape[1], pixel_shape[0], 3), np.uint8)
+    for y in range(pixel_shape[1]):
+        for x in range(pixel_shape[0]):
+            depth =  mandelbrot_depth(space_real[x] + 1j * space_imag[y], max_depth)
+            hsv_img[y,x] = assign_hsv_color(depth, loop_depth)
+    return hsv_img
+
+@jit
+def assign_hsv_color(depth, loop_depth):
+    if depth == 0:
+        hue = 0
+        sat = 0
+        val = 0
+    else:
+        hue = int((255 * (depth % loop_depth)) / depth)
+        sat = 255
+        val = 255
+    return np.array([hue, sat, val], np.uint8)
+
+log = logging.getLogger()
 
 class Mandelbrot:
 
     center = (0.41825763942621236, -0.34087020388354944)
     shape_divider = 1e14
+    loop_depth = 800
     def __init__(self, shape, max_depth):
         self.size = (shape[0] / self.shape_divider, shape[1] / self.shape_divider)
         self.shape = shape
         self.max_depth = max_depth
 
+    def set_depth(self, value):
+        self.max_depth = value
+
+    def mod_depth(self, offset):
+        self.max_depth += offset
+
+    def zoom(self, factor):
+        self.shape_divider *= factor
+        self.size = (self.shape[0] / self.shape_divider, self.shape[1] / self.shape_divider)
+
     def snapshot(self):
-        depth = self.compute()
-        return self.depth_to_pixels(depth)
-
-    def compute(self):
-        print(f"Computing mandelbrot: shape = {self.shape[0]} x {self.shape[1]}, max_depth = {self.max_depth}")
+        log.info(f"Computing mandelbrot: shape = {self.shape[0]} x {self.shape[1]}, max_depth = {self.max_depth}")
         start = time.time()
-        depth_list = check_mandelbrot(self.center, self.shape, self.size, self.max_depth)
+        hsv_img = create_mandelbrot(self.center, self.shape, self.size, self.max_depth, self.loop_depth)
         diff = time.time() - start
-        print(f"Computation took {diff}s")
-        return depth_list
+        log.info("Computation took {0:.2f}s".format(diff))
+        return cv2.cvtColor(hsv_img, cv2.COLOR_HSV2BGR)
 
-    def depth_to_pixels(self, depth_array):
-        output = np.empty((depth_array.shape[0], depth_array.shape[1], 3), np.uint8)
-        print(output.shape)
-        for i in range(depth_array.shape[1]):
-            line = np.array([assign_color(e) for e in depth_array[i,:]])
-            output[i,:] = line
-        return output
+if __name__ == "__main__":
+    SHAPE = (1920, 1080)
+    # SHAPE = (800, 600)
+    MAX_DEPTH = 8000
 
-def assign_color(depth):
-    return np.array([depth % 256, depth % 256, depth % 256], np.uint8)
- 
+    setup_logger()
 
-SHAPE = (1920, 1080)
-MAX_DEPTH = 400
+    mb = Mandelbrot(SHAPE, MAX_DEPTH)
+    snap = mb.snapshot()
+    # snap = cv2.GaussianBlur(snap, (3, 3), cv2.BORDER_DEFAULT)
+    snap = cv2.fastNlMeansDenoisingColored(snap, h = 25)
+    cv2.imwrite("output.png", snap)
 
-mb = Mandelbrot(SHAPE, MAX_DEPTH)
-snap = mb.snapshot()
-
-cv2.imwrite("output.png", snap)
-
-cv2.imshow('Test image', snap)
-cv2.waitKey(0)
-cv2.destroyAllWindows()
+    # cv2.imshow('TestImage', snap)
+    # cv2.waitKey(0)
+    # cv2.destroyAllWindows()
 
 
 
