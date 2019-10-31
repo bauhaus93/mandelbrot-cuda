@@ -26,40 +26,41 @@ if __name__ == "__main__":
 		for event in pygame.event.get():
 			if event.type == pygame.QUIT:
 				quit = True
-			elif event.type == pygame.MOUSEBUTTONDOWN:
-				if event.button == 1:
-					pos = pygame.mouse.get_pos()
-					offset = (int(pos[0] - WINDOW_SIZE[0] / 2),
-						  int(pos[1] - WINDOW_SIZE[1] / 2))
-					mb.move(offset)
-					needsUpdate = True
-			elif event.type == pygame.KEYDOWN:
-				if event.key == pygame.K_F1:
-					mb.snapshot(SNAPSHOT_SIZE)
-				elif event.key == pygame.K_F2:
-					SEQ_COUNT = 100000
-					if active_seq is None:
-						log.info("Creating zoomed sequence...")
-						active_seq = mb.zoomed_sequence(SEQ_COUNT, WINDOW_SIZE, 1.01)
-				elif event.key == pygame.K_F3:
-					TRIES = 10000
-					if mb.find_poi(WINDOW_SIZE, max_tries = TRIES):
+			elif not active_seq:
+				if event.type == pygame.MOUSEBUTTONDOWN:
+					if event.button == 1:
+						pos = pygame.mouse.get_pos()
+						offset = (int(pos[0] - WINDOW_SIZE[0] / 2),
+							  int(pos[1] - WINDOW_SIZE[1] / 2))
+						mb.move(offset)
 						needsUpdate = True
-				elif event.key == pygame.K_F4:
-					mb.randomize_buckets()
-					needsUpdate = True
-				elif event.key == pygame.K_e:
-					mb.zoom(2.)
-					needsUpdate = True
-				elif event.key == pygame.K_q:
-					mb.zoom(0.5)
-					needsUpdate = True
-				elif event.key == pygame.K_d:
-					mb.mod_depth(100)
-					needsUpdate = True
-				elif event.key == pygame.K_f:
-					mb.mod_depth(-100)
-					needsUpdate = True
+				elif event.type == pygame.KEYDOWN:
+					if event.key == pygame.K_F1:
+						mb.snapshot(SNAPSHOT_SIZE)
+					elif event.key == pygame.K_F2:
+						SEQ_COUNT = 100000
+						if active_seq is None:
+							log.info("Creating zoomed sequence...")
+							active_seq = mb.zoomed_sequence(SEQ_COUNT, WINDOW_SIZE, 1.01)
+					elif event.key == pygame.K_F3:
+						TRIES = 10000
+						if mb.find_poi(WINDOW_SIZE, max_tries = TRIES):
+							needsUpdate = True
+					elif event.key == pygame.K_F4:
+						mb.randomize_buckets()
+						needsUpdate = True
+					elif event.key == pygame.K_e:
+						mb.zoom(2.)
+						needsUpdate = True
+					elif event.key == pygame.K_q:
+						mb.zoom(0.5)
+						needsUpdate = True
+					elif event.key == pygame.K_d:
+						mb.mod_depth(100)
+						needsUpdate = True
+					elif event.key == pygame.K_f:
+						mb.mod_depth(-100)
+						needsUpdate = True
 		if active_seq:
 			try:
 				progress = next(active_seq)

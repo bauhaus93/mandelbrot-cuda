@@ -12,7 +12,7 @@ from utility import setup_logger
 
 def default_filename():
 	ts = time.localtime()
-	return f"{ts.tm_year}-{ts.tm_mon:02}-{ts.tm_mday:02}_{ts.tm_hour:02}-{ts.tm_min:02}-{ts.tm_sec:02}"
+	return f"{ts.tm_year}-{ts.tm_mon:02}-{ts.tm_mday:02}_{ts.tm_hour:02}_{ts.tm_min:02}_{ts.tm_sec:02}"
 
 @jit
 def create_space(center, size, element_count):
@@ -108,10 +108,10 @@ class Mandelbrot:
 		self.buckets = create_hsv_buckets(amount)
 	
 	def randomize_zoom(self):
-		self.shape_divider = random.uniform(1e-5, 1e-14)
+		self.shape_divider = random.uniform(1e5, 1e14)
 
 	def randomize_depth(self):
-		self.max_depth = random.randint(500, 2000)
+		self.max_depth = random.randint(100, 2000)
 
 	def set_depth(self, value):
 		self.max_depth = value
@@ -123,8 +123,7 @@ class Mandelbrot:
 		self.shape_divider *= factor
 	
 	def move(self, units):
-		self.center = (self.center[0] + units[0] / self.shape_divider,
-			       self.center[1] + units[1] / self.shape_divider)
+		self.center = (self.center.real + units[0] / self.shape_divider) + 1j * (self.center.imag + units[1] / self.shape_divider)
 
 	def estimate_entropy(self, shape, points = 50):
 		fact = max(shape[0] / points, shape[1] / points)
@@ -158,13 +157,18 @@ class Mandelbrot:
 				yield i
 		yield 
 
-	def random_snapshot(self, shape, min_entropy, max_tries, name = default_filename()):
-		while not self.find_poi(shape, min_entropy, max_tries):
-			self.snapshot()
+	def random_snapshot(self, shape, min_entropy, max_tries):
+		self.randomize_zoom()
+		self.randomize_depth()
+		if self.find_poi(shape, min_entropy, max_tries):
+			self.randomize_buckets()
+			self.snapshot(shape)
 
-	def snapshot(self, shape, name = default_filename()):
+	def snapshot(self, shape, name = None):
 		self.build_rgb(shape)
-		ts = time.localtime()
+		if name is None:
+			name = default_filename()
+		log.info(f"Creating '{name}.png'")
 		return cv2.imwrite(name + ".png", self.last_img)
 	
 	def build_rgb(self, shape):
@@ -189,6 +193,4 @@ if __name__ == "__main__":
 
 	mb = Mandelbrot(MAX_DEPTH)
 	for i in range(1000):
-		mb.randomize_zoom()
-		mb.randomize_depth()
-		mb.random_snapshot()
+		mb.random_snapshot(SHAPE, 1., 10000)
