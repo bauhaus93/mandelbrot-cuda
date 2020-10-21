@@ -2,4 +2,4 @@ numpy
 scipy
 numba
 opencv-python
-pygame
+PyGObject

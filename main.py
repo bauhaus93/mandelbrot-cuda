@@ -1,81 +1,118 @@
 #!/usr/bin/env python
-import pygame
 import logging
+import threading
 
+import gi
 
 from mandelbrot import Mandelbrot
 from utility import setup_logger
 
+gi.require_version("Gtk", "3.0")
+from gi.repository import GdkPixbuf, GLib, Gtk
+
+
+class Window:
+    def __init__(self, mandelbrot):
+        self.mandelbrot = mandelbrot
+        self.draw_shape = (1024, 768)
+
+        self.builder = Gtk.Builder()
+        self.builder.add_from_file("window.glade")
+        self.builder.connect_signals(self)
+
+    def run(self):
+        self.builder.get_object("window1").show_all()
+        Gtk.main()
+
+    def update_position_label(self):
+        center = self.mandelbrot.get_center()
+
+        self.builder.get_object("label_position").set_text(
+            f"{center.real}/{center.imag}"
+        )
+
+    def update_computation_time_label(self):
+        self.builder.get_object("label_computation_time").set_text(
+            f"{self.mandelbrot.get_last_computation_time():.2f} s"
+        )
+
+    def update_step_size_label(self):
+        self.builder.get_object("label_step_size").set_text(
+            f"{self.mandelbrot.get_step_size()}"
+        )
+
+    def redraw_image(self, rebuild=True):
+        if rebuild:
+            self.mandelbrot.build_rgb(self.draw_shape)
+        data = list(
+            self.mandelbrot.get_rgb()
+            .swapaxes(0, 1)
+            .reshape(
+                -1,
+            )
+        )
+
+        pixbuf = GdkPixbuf.Pixbuf.new_from_data(
+            data, GdkPixbuf.Colorspace.RGB, False, 8, 1024, 768, 1024 * 3
+        )
+        self.builder.get_object("image1").set_from_pixbuf(pixbuf)
+        self.update_computation_time_label()
+
+    def start_zoomed_sequence(self):
+        pass
+
+    def add_log_entry(self, text):
+        self.builder.get_object("textview_log").get_buffer().insert_at_cursor(
+            text + "\n"
+        )
+
+    def on_window1_destroy(self, *args):
+        Gtk.main_quit()
+
+    def on_window1_show(self, *args):
+        self.redraw_image()
+        self.update_position_label()
+        self.update_step_size_label()
+
+    def on_window1_key_press_event(self, *args):
+        event = args[1]
+        if event.string == "+":
+            self.mandelbrot.zoom(1.25)
+            self.update_step_size_label()
+            self.redraw_image()
+        elif event.string == "-":
+            self.mandelbrot.zoom(0.75)
+            self.update_step_size_label()
+            self.redraw_image()
+
+    def on_image1_button_press_event(self, *args):
+        event = args[1]
+        offset = (event.x - self.draw_shape[0] / 2, event.y - self.draw_shape[1] / 2)
+        self.mandelbrot.move(offset)
+        self.redraw_image()
+        self.update_position_label()
+
+    def on_button_snapshot_clicked(self, *args):
+        SHAPE = (1920, 1080)
+        filename = self.mandelbrot.snapshot(SHAPE)
+        self.add_log_entry(
+            f"Created snapshot: {filename}, size = {SHAPE[0]} x {SHAPE[1]}, time = {self.mandelbrot.get_last_computation_time():.2f}s"
+        )
+
+    def on_button_recolor_clicked(self, *args):
+        self.mandelbrot.randomize_buckets()
+        self.redraw_image()
+
+    def on_button_zoomed_sequence_clicked(self, *args):
+        self.start_zoomed_sequence()
+
+
 if __name__ == "__main__":
-	SNAPSHOT_SIZE = (1920, 1080)
-	WINDOW_SIZE = (800, 600)
-	INITIAL_DEPTH = 1000
-	setup_logger()
-	log = logging.getLogger()
+    INITIAL_DEPTH = 10000
+    setup_logger()
+    log = logging.getLogger(__name__)
 
-	mb = Mandelbrot(INITIAL_DEPTH)
-	
+    mb = Mandelbrot(INITIAL_DEPTH)
 
-	pygame.init()
-	screen = pygame.display.set_mode(WINDOW_SIZE)
-
-	quit = False
-	needsUpdate = True
-	active_seq = None
-	while not quit:
-		for event in pygame.event.get():
-			if event.type == pygame.QUIT:
-				quit = True
-			elif not active_seq:
-				if event.type == pygame.MOUSEBUTTONDOWN:
-					if event.button == 1:
-						pos = pygame.mouse.get_pos()
-						offset = (int(pos[0] - WINDOW_SIZE[0] / 2),
-							  int(pos[1] - WINDOW_SIZE[1] / 2))
-						mb.move(offset)
-						needsUpdate = True
-				elif event.type == pygame.KEYDOWN:
-					if event.key == pygame.K_F1:
-						mb.snapshot(SNAPSHOT_SIZE)
-					elif event.key == pygame.K_F2:
-						SEQ_COUNT = 100000
-						if active_seq is None:
-							log.info("Creating zoomed sequence...")
-							active_seq = mb.zoomed_sequence(SEQ_COUNT, WINDOW_SIZE, 1.01)
-					elif event.key == pygame.K_F3:
-						TRIES = 10000
-						if mb.find_poi(WINDOW_SIZE, max_tries = TRIES):
-							needsUpdate = True
-					elif event.key == pygame.K_F4:
-						mb.randomize_buckets()
-						needsUpdate = True
-					elif event.key == pygame.K_e:
-						mb.zoom(2.)
-						needsUpdate = True
-					elif event.key == pygame.K_q:
-						mb.zoom(0.5)
-						needsUpdate = True
-					elif event.key == pygame.K_d:
-						mb.mod_depth(100)
-						needsUpdate = True
-					elif event.key == pygame.K_f:
-						mb.mod_depth(-100)
-						needsUpdate = True
-		if active_seq:
-			try:
-				progress = next(active_seq)
-				log.info(f"Progress: {progress}/{SEQ_COUNT}")
-			except StopIteration:
-				log.info("Finished sequence")
-				active_seq = None
-			needsUpdate = True
-
-		if needsUpdate:
-			needsUpdate = False
-			mb.build_rgb(WINDOW_SIZE)
-			pygame.surfarray.blit_array(screen, mb.get_rgb().swapaxes(0, 1))
-			pygame.display.flip()
-		if not active_seq:
-			pygame.time.wait(100)
-
-
+    window = Window(mb)
+    window.run()
