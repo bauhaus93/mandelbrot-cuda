@@ -14,7 +14,7 @@ from gi.repository import GdkPixbuf, GLib, Gtk
 class Window:
     def __init__(self, mandelbrot):
         self.mandelbrot = mandelbrot
-        self.draw_shape = (1024, 768)
+        self.draw_shape = (3000, 1000)
 
         self.builder = Gtk.Builder()
         self.builder.add_from_file("window.glade")
@@ -53,7 +53,13 @@ class Window:
         )
 
         pixbuf = GdkPixbuf.Pixbuf.new_from_data(
-            data, GdkPixbuf.Colorspace.RGB, False, 8, 1024, 768, 1024 * 3
+            data,
+            GdkPixbuf.Colorspace.RGB,
+            False,
+            8,
+            self.draw_shape[0],
+            self.draw_shape[1],
+            self.draw_shape[0] * 3,
         )
         self.builder.get_object("image1").set_from_pixbuf(pixbuf)
         self.update_computation_time_label()
@@ -93,7 +99,7 @@ class Window:
         self.update_position_label()
 
     def on_button_snapshot_clicked(self, *args):
-        SHAPE = (1920, 1080)
+        SHAPE = (5120, 1440)
         filename = self.mandelbrot.snapshot(SHAPE)
         self.add_log_entry(
             f"Created snapshot: {filename}, size = {SHAPE[0]} x {SHAPE[1]}, time = {self.mandelbrot.get_last_computation_time():.2f}s"
@@ -106,13 +112,16 @@ class Window:
     def on_button_zoomed_sequence_clicked(self, *args):
         self.start_zoomed_sequence()
 
+    def on_button_randomize_clicked(self, *args):
+        self.mandelbrot.random_poi((1920, 1080))
+        self.redraw_image()
+
 
 if __name__ == "__main__":
-    INITIAL_DEPTH = 10000
     setup_logger()
     log = logging.getLogger(__name__)
 
-    mb = Mandelbrot(INITIAL_DEPTH)
+    mb = Mandelbrot(bucket_count=1000)
 
     window = Window(mb)
     window.run()

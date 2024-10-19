@@ -12,6 +12,9 @@ from numba import cuda, jit
 
 from utility import setup_logger
 
+MIN_DEPTH = 100
+MAX_DEPTH = 100000
+
 
 def default_filename():
     ts = time.localtime()
@@ -38,24 +41,33 @@ def fill_depths(origin_x, origin_y, step_size, max_depth, image):
 
 
 @cuda.jit
-def fill_color(origin_x, origin_y, step_size, max_depth, buckets, image):
+def fill_color(origin_x, origin_y, step_size, max_depth, buckets, image, image_depth):
     (x, y) = cuda.grid(2)
     depth = mandelbrot_depth(
         origin_x + x * step_size, origin_y + y * step_size, max_depth
     )
+
     if depth != 0:
+        cycles = depth // buckets.shape[0]
+        if cycles > 2:
+            return
         color = buckets[depth % buckets.shape[0]]
         image[x, y, 0] = color[0]
         image[x, y, 1] = color[1]
         image[x, y, 2] = color[2]
+        image_depth[x, y] = depth
 
 
-def create_mandelbrot(center, shape, step_size, max_depth, buckets):
+def create_mandelbrot(center, shape, step_size, reference_depth, buckets):
+    max_depth = min(MAX_DEPTH, max(MIN_DEPTH, 10 * reference_depth))
+
     origin_x = center.real - shape[0] / 2 * step_size
     origin_y = center.imag - shape[1] / 2 * step_size
     image = np.zeros((shape[0], shape[1], 3), np.uint8)
+    image_depth = np.zeros((shape[0], shape[1]), np.uint32)
 
     device_image = cuda.to_device(image)
+    device_image_depth = cuda.to_device(image_depth)
     device_buckets = cuda.to_device(buckets)
 
     threads_per_block = (16, 16)
@@ -63,19 +75,22 @@ def create_mandelbrot(center, shape, step_size, max_depth, buckets):
     blocks_per_grid_y = math.floor(shape[1] / threads_per_block[1])
     blocks_per_grid = (blocks_per_grid_x, blocks_per_grid_y)
     fill_color[blocks_per_grid, threads_per_block](
-        origin_x, origin_y, step_size, max_depth, device_buckets, device_image
+        origin_x,
+        origin_y,
+        step_size,
+        max_depth,
+        device_buckets,
+        device_image,
+        device_image_depth,
     )
 
-    device_image.to_host()
-    return image
+    image = device_image.copy_to_host()
+    image_depth = device_image_depth.copy_to_host()
 
+    depths = image_depth.flatten()
+    reference_depth = np.median(depths[np.nonzero(depths)])
 
-def assign_hsv_color(depth, buckets):
-    if depth == 0:
-        col = np.zeros(3, np.uint8)
-    else:
-        col = buckets[depth % buckets.shape[0]]
-    return col
+    return image, reference_depth
 
 
 def create_hsv_buckets(amount):
@@ -95,9 +110,9 @@ def create_hsv_buckets(amount):
             val = random.randint(0, 255)
         else:
             step = random.randint(1, 4)
-            hue = min(180, max(0, buckets[i - 1][0] + direction[0] * step))
-            sat = min(200, max(50, buckets[i - 1][1] + direction[1] * step))
-            val = min(200, max(50, buckets[i - 1][2] + direction[2] * step))
+            hue = min(180, max(0, int(buckets[i - 1][0]) + direction[0] * step))
+            sat = min(200, max(50, int(buckets[i - 1][1]) + direction[1] * step))
+            val = min(200, max(50, int(buckets[i - 1][2]) + direction[2] * step))
         buckets[i] = (hue, sat, val)
     return buckets
 
@@ -110,12 +125,13 @@ class Mandelbrot:
 
     center = 0.41825763942621236 - 0.34087020388354944j
     step_size = 1.0 / 256.0
+    reference_depth = 0
     last_img = None
     last_computation_time = 0.0
+    buckets = None
 
-    def __init__(self, max_depth):
-        self.max_depth = max_depth
-        self.randomize_buckets()
+    def __init__(self, bucket_count=1000):
+        self.randomize_buckets(bucket_count)
 
     def get_center(self):
         return self.center
@@ -129,9 +145,12 @@ class Mandelbrot:
     def randomize_center(self):
         self.center = random.uniform(-2.0, 2.0) + 1j * random.uniform(-2.0, 2.0)
 
+    def randomize_zoom(self):
+        self.step_size = random.uniform(1e-8, 1e-15)
+
     def randomize_buckets(self, amount=None):
-        if amount is None:
-            amount = self.max_depth
+        if amount is None and self.buckets is not None:
+            amount = len(self.buckets)
         self.buckets = create_hsv_buckets(amount)
 
     def set_depth(self, value):
@@ -148,8 +167,15 @@ class Mandelbrot:
             self.center.imag + units[1] * self.step_size
         )
 
-    def random_poi(self):
-        self.randomize_center()
+    def random_poi(self, shape):
+        while True:
+            self.randomize_center()
+            self.build_rgb(shape)
+            v, c = np.unique(self.last_img, return_counts=True)
+            e = scipy.stats.entropy(c, base=2)
+            log.info("Entropy: %.2f", e)
+            if e >= 2.5:
+                break
 
     def zoomed_sequence(self, count, shape, zoom):
         for i in range(count):
@@ -168,11 +194,15 @@ class Mandelbrot:
 
     def build_rgb(self, shape):
         log.info(
-            f"Computing mandelbrot: center = {self.center}, shape = {shape[0]} x {shape[1]}, step_size = {self.step_size}, max_depth = {self.max_depth}"
+            f"Computing mandelbrot: center = {self.center}, shape = {shape[0]} x {shape[1]}, step_size = {self.step_size}, reference_depth={self.reference_depth}"
         )
         start = time.time()
-        hsv_img = create_mandelbrot(
-            self.center, shape, self.step_size, self.max_depth, self.buckets
+        hsv_img, self.reference_depth = create_mandelbrot(
+            self.center,
+            shape,
+            self.step_size,
+            self.reference_depth,
+            self.buckets,
         )
         self.last_computation_time = time.time() - start
         log.info("Computation took {0:.2f}s".format(self.last_computation_time))
@@ -180,15 +210,3 @@ class Mandelbrot:
 
     def get_rgb(self):
         return self.last_img
-
-
-if __name__ == "__main__":
-    SHAPE = (1920, 1080)
-    MAX_DEPTH = 1500
-
-    setup_logger()
-    # random.seed("HELLO")
-
-    mb = Mandelbrot(MAX_DEPTH)
-    for i in range(1000):
-        mb.random_snapshot(SHAPE, 1.0, 10000)
